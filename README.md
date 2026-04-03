@@ -18,5 +18,5 @@ This project automates the extraction of key information from incoming Gmail mes
 2. Set up your Credentials for Gmail and Google Sheets.
 3. Replace the Sheet ID with your own.
 
-## System Workflow
-![Workflow Screenshot](link-to-your-screenshot.png)
+## Project Demo
+You can watch the full video demonstration of the workflow here: [View Demo on Google Drive](https://drive.google.com/file/d/17-SOwBvg3FGOXwlCEHbaZu-rj4B0BzYY/view?usp=sharing)
