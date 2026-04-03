@@ -1,0 +1,600 @@
+{
+  "name": "Email Job Extractor - AI",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "subject:\"Job Order\""
+        },
+        "options": {}
+      },
+      "id": "9c39e985-1118-471a-9e5e-de9c8e90135d",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        240,
+        320
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "FMzPQImZC5WT8QB5",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const item = $input.item.json;\n\n// Function to extract email body (recursively for nested parts)\nfunction extractBody(payload) {\n    if (!payload) return '';\n    if (payload.body && payload.body.data) {\n        return Buffer.from(payload.body.data, 'base64').toString('utf-8');\n    }\n    const parts = payload.parts || [];\n    let htmlFallback = '';\n    for (const part of parts) {\n        if (part.mimeType === 'text/plain' && part.body && part.body.data) {\n            return Buffer.from(part.body.data, 'base64').toString('utf-8');\n        }\n        if (part.mimeType === 'text/html' && part.body && part.body.data) {\n            htmlFallback = Buffer.from(part.body.data, 'base64').toString('utf-8');\n        }\n        if (part.mimeType && part.mimeType.startsWith('multipart/')) {\n            const nested = extractBody(part);\n            if (nested) return nested;\n        }\n    }\n    return htmlFallback;\n}\n\n// Extract the main email body\nlet bodyText = item.text || item.textPlain || item.textAsHtml || item.html || '';\nif (!bodyText && item.payload) {\n    bodyText = extractBody(item.payload);\n}\n\n// Strip HTML tags\nbodyText = bodyText.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\\s+/g, ' ').trim();\n\n// Extract subject safely\nlet subject = '';\nif (item.subject) {\n    subject = item.subject;\n} else if (item.payload && item.payload.headers) {\n    // Gmail headers can be array or object, handle both\n    const headers = Array.isArray(item.payload.headers) ? item.payload.headers : Object.values(item.payload.headers);\n    const found = headers.find(h => h.name && h.name.toLowerCase() === 'subject');\n    subject = found ? found.value : '';\n}\n\n// Return clean JSON\nreturn {\n    json: {\n        emailBody: bodyText,\n        subject: subject,\n        from: item.from || '',\n        date: item.date || '',\n    }\n};"
+      },
+      "id": "975fadcf-3ff2-49ba-a6cc-20934286aed2",
+      "name": "Extract Email Body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Extract the following fields from the email body as a clean JSON object. If a value is missing, return \"\". Normalize dates to YYYY-MM-DD.\n\nFields:\njob_name, job_order_number, client_name, facility_name, city, state, job_type, positions_available, billing_codes, specialty, sub_specialty, min_years_experience, start_date, holiday_coverage, contract_length, shift, bilingual, h1b_required, position_urgency, rate_type, incidentals, mileage_reimbursement, cost_center, all_inclusive_rate, charge_rate, on_call_rate, call_back_min, call_back_rate, holiday_rate, shift_differential, guaranteed_hours_day, guaranteed_hours_week, certifications_required.\n\nEmail Body:\n{{ $json.emailBody }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are a precise data extraction assistant. Extract job fields from healthcare staffing emails and return them in the exact JSON schema format requested. Never add extra fields. If a value is not found, use an empty string.",
+          "maxIterations": 3
+        }
+      },
+      "id": "bdaa7411-610a-4fc7-9438-a7c6bf2ec351",
+      "name": "AI Job Field Extractor",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        864,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "builtInTools": {},
+        "options": {
+          "temperature": 0
+        }
+      },
+      "id": "dfa09491-31fb-4c90-b5a5-006c072f7891",
+      "name": "OpenAI GPT-4o-mini",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        928,
+        512
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "ecXZdgxGzbOxyOc6",
+          "name": "n8n free OpenAI API credits"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"job_name\": \"RN - Med/Surg Nights\",\n  \"job_order_number\": \"290577\",\n  \"client_name\": \"Tri-State\",\n  \"facility_name\": \"Tri-State\",\n  \"city\": \"Clarkston\",\n  \"state\": \"WA\",\n  \"job_type\": \"Contract\",\n  \"positions_available\": \"1\",\n  \"billing_codes\": \"N/A\",\n  \"specialty\": \"Nursing\",\n  \"sub_specialty\": \"PCU, Med-surg Adult\",\n  \"min_years_experience\": \"3\",\n  \"start_date\": \"2025-10-06\",\n  \"holiday_coverage\": \"Yes\",\n  \"contract_length\": \"13 Weeks\",\n  \"shift\": \"Nights\",\n  \"bilingual\": \"No\",\n  \"h1b_required\": \"No\",\n  \"position_urgency\": \"Quick Start\",\n  \"rate_type\": \"All Inclusive\",\n  \"incidentals\": \"\",\n  \"mileage_reimbursement\": \"\",\n  \"cost_center\": \"\",\n  \"all_inclusive_rate\": \"$90.00\",\n  \"charge_rate\": \"\",\n  \"on_call_rate\": \"$5 per hour\",\n  \"call_back_min\": \"2 Hour\",\n  \"call_back_rate\": \"All Inclusive + $10\",\n  \"holiday_rate\": \"All Inclusive + $10\",\n  \"shift_differential\": \"\",\n  \"guaranteed_hours_day\": \"No Guarantee\",\n  \"guaranteed_hours_week\": \"36\",\n  \"certifications_required\": \"ACLS, BLS/BCLS\",\n  \"facility_terms\": \"\"\n}"
+      },
+      "id": "e0a3bc1b-ae7d-493d-97b6-0e01598a2a13",
+      "name": "Job Fields Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1328,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1OSRcCgDuDA9Jw5yNO2oEGAMzsoUs7TsL8j42z9_VBLM",
+          "mode": "list",
+          "cachedResultName": "Email-project",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1OSRcCgDuDA9Jw5yNO2oEGAMzsoUs7TsL8j42z9_VBLM/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1OSRcCgDuDA9Jw5yNO2oEGAMzsoUs7TsL8j42z9_VBLM/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "output": "={{ $json.output }}",
+            "job_name": "={{ $json.output.job_name }}",
+            "certifications_required": "={{ $json.output.certifications_required }}",
+            "guaranteed_hours_week": "={{ $json.output.guaranteed_hours_week}}",
+            "guaranteed_hours_day": "={{ $json.output.guaranteed_hours_day}}",
+            "shift_differential": "={{ $json.output.shift_differential}}",
+            "holiday_rate": "={{ $json.output.holiday_rate}}",
+            "call_back_rate": "={{ $json.output.call_back_rate}}",
+            "call_back_min": "={{ $json.output.call_back_min}}",
+            "on_call_rate": "={{ $json.output.on_call_rate}}",
+            "charge_rate": "={{ $json.output.charge_rate}}",
+            "all_inclusive_rate": "={{ $json.output.all_inclusive_rate}}",
+            "cost_center": "={{ $json.output.cost_center}}",
+            "mileage_reimbursement": "={{ $json.output.mileage_reimbursement}}",
+            "incidentals": "={{ $json.output.incidentals}}",
+            "rate_type": "={{ $json.output.rate_type}}",
+            "position_urgency": "={{ $json.output.position_urgency}}",
+            "h1b_required": "={{ $json.output.h1b_required}}",
+            "bilingual": "={{ $json.output.bilingual}}",
+            "shift": "={{ $json.output.shift}}",
+            "contract_length": "={{ $json.output.contract_length}}",
+            "holiday_coverage": "={{ $json.output.holiday_coverage}}",
+            "start_date": "={{ $json.output.start_date}}",
+            "min_years_experience": "={{ $json.output.min_years_experience}}",
+            "sub_specialty": "={{ $json.output.sub_specialty}}",
+            "specialty": "={{ $json.output.specialty}}",
+            "billing_codes": "={{ $json.output.billing_codes}}",
+            "positions_available": "={{ $json.output.positions_available}}",
+            "job_type": "={{ $json.output.job_type}}",
+            "state": "={{ $json.output.state}}",
+            "city": "={{ $json.output.city}}",
+            "facility_name": "={{ $json.output.facility_name}}",
+            "client_name": "={{ $json.output.client_name}}",
+            "job_order_number": "={{ $json.output.job_order_number}}"
+          },
+          "matchingColumns": [
+            "output"
+          ],
+          "schema": [
+            {
+              "id": "job_name",
+              "displayName": "job_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "job_order_number",
+              "displayName": "job_order_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "client_name",
+              "displayName": "client_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "facility_name",
+              "displayName": "facility_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "city",
+              "displayName": "city",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "state",
+              "displayName": "state",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "job_type",
+              "displayName": "job_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "positions_available",
+              "displayName": "positions_available",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "billing_codes",
+              "displayName": "billing_codes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "specialty",
+              "displayName": "specialty",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "sub_specialty",
+              "displayName": "sub_specialty",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "min_years_experience",
+              "displayName": "min_years_experience",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "start_date",
+              "displayName": "start_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "holiday_coverage",
+              "displayName": "holiday_coverage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "contract_length",
+              "displayName": "contract_length",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "shift",
+              "displayName": "shift",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "bilingual",
+              "displayName": "bilingual",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "h1b_required",
+              "displayName": "h1b_required",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "position_urgency",
+              "displayName": "position_urgency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "rate_type",
+              "displayName": "rate_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "incidentals",
+              "displayName": "incidentals",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "mileage_reimbursement",
+              "displayName": "mileage_reimbursement",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "cost_center",
+              "displayName": "cost_center",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "all_inclusive_rate",
+              "displayName": "all_inclusive_rate",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "charge_rate",
+              "displayName": "charge_rate",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "on_call_rate",
+              "displayName": "on_call_rate",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "call_back_min",
+              "displayName": "call_back_min",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "call_back_rate",
+              "displayName": "call_back_rate",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "holiday_rate",
+              "displayName": "holiday_rate",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "shift_differential",
+              "displayName": "shift_differential",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "guaranteed_hours_day",
+              "displayName": "guaranteed_hours_day",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "guaranteed_hours_week",
+              "displayName": "guaranteed_hours_week",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "certifications_required",
+              "displayName": "certifications_required",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "output",
+              "displayName": "output",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "d09340ee-31b4-45d8-b484-02820bcb89c0",
+      "name": "Append to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1472,
+        304
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "XF4aqhLZTZAultLg",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Email Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Email Body": {
+      "main": [
+        [
+          {
+            "node": "AI Job Field Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Job Field Extractor": {
+      "main": [
+        [
+          {
+            "node": "Append to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI GPT-4o-mini": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Job Field Extractor",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job Fields Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Job Field Extractor",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "versionId": "eda0a443-d99b-4fa6-aca6-255abb271202",
+  "meta": {
+    "aiBuilderAssisted": true,
+    "templateCredsSetupCompleted": true,
+    "instanceId": "c563f6bc6f44834962f7ff7c192c00d4ba5a1e009962aa475b2688785b75f21c"
+  },
+  "id": "LZh74ajWhqZvz2nj",
+  "tags": []
+}
